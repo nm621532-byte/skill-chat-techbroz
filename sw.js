@@ -1,6 +1,6 @@
 // Offline shell for Skill Chat. API calls (GitHub, AI providers) always go to the network.
-const CACHE = 'skill-chat-v1.1.0';
-const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'lib/github.js', 'lib/frontmatter.js', 'lib/providers.js', 'lib/store.js', 'lib/md.js', 'lib/agent.js', 'lib/zip.js', 'lib/library.js', 'preview.html',
+const CACHE = 'skill-chat-v1.2.0';
+const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'lib/github.js', 'lib/frontmatter.js', 'lib/providers.js', 'lib/store.js', 'lib/md.js', 'lib/agent.js', 'lib/zip.js', 'lib/library.js', 'lib/video.js', 'preview.html',
   'vendor/marked.umd.js', 'vendor/purify.min.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
