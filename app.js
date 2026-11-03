@@ -6,8 +6,9 @@ import { renderMarkdown, copyText, addCopyButtons } from './lib/md.js';
 import { ROUTER_SYSTEM, MAX_PICK, routerMessages, parseRoute, shortlist, localPick, agentSystem, continueMessage, readStatus, stripStatus, nextMove, compactHistory, collectFiles, previewDoc } from './lib/agent.js';
 import { makeZip } from './lib/zip.js';
 import { indexRepo, referencedFiles } from './lib/library.js';
+import { PLATFORMS, PLATFORM_IDS, platform, detectPlatforms, isPostVideoCommand, topicFromCommand, META_SYSTEM, metaMessages, parseMeta, cleanHashtags, cleanTags, checkMeta, shareText, nextInQueue, fileKey, fmtDuration, videoHints, YT_TITLE_MAX } from './lib/video.js';
 
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 const PAGE = 40;
 const CONTEXT_CAP = 150000; // characters of skill text sent to the AI
 const EXAMPLES = [
@@ -152,13 +153,14 @@ function route() {
   const q = new URLSearchParams(qs || '');
   document.body.classList.toggle('in-chat', path === '/chat');
   const isDo = (path === '/' && !q.get('u')) || path === '/run';
-  const navKey = path === '/library' ? 'library' : path === '/settings' ? 'settings' : isDo ? 'do' : 'explore';
+  const navKey = path === '/library' ? 'library' : path === '/settings' ? 'settings' : path === '/post' ? 'post' : isDo ? 'do' : 'explore';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === navKey));
   if (path === '/library') return renderLibrary();
   if (path === '/settings') return renderSettings();
   if (path === '/skill') return renderSkill(q);
   if (path === '/chat') return renderChat(q);
   if (path === '/run') return renderRun(q);
+  if (path === '/post') return renderPost(q);
   if (path === '/explore' || q.get('u')) return renderExplore(q);
   return renderDo();
 }
@@ -198,7 +200,7 @@ function renderExplore(q) {
         h('li', null, h('strong', { text: 'Paste a GitHub link. ' }), 'Skill Chat finds every SKILL.md in it.'),
         h('li', null, h('strong', { text: 'Pick a skill. ' }), 'Read it, and tick extra files you want the AI to see.'),
         h('li', null, h('strong', { text: 'Chat. ' }), 'The skill becomes the AI\u2019s instructions. Your key stays on this device.')),
-      window.Capacitor ? null : h('p', { class: 'small' }, h('a', { href: 'downloads/SkillChat-v1.1.apk', download: 'SkillChat-v1.1.apk', text: 'Download the Android app (APK, 3 MB)' }), ' or tap your browser menu and choose Install app.')));
+      window.Capacitor ? null : h('p', { class: 'small' }, h('a', { href: 'downloads/SkillChat-v1.2.apk', download: 'SkillChat-v1.2.apk', text: 'Download the Android app (APK, 3 MB)' }), ' or tap your browser menu and choose Install app.')));
   }
 }
 
@@ -703,7 +705,7 @@ function renderSettings() {
       if (confirm('Delete all keys, chats, saved skills and settings from this device?')) { store.wipeAll(); applyTheme(); toast('All data deleted'); renderSettings(); }
     } })));
   v.append(h('section', { class: 'block about' }, h('h2', { text: 'About' }),
-    window.Capacitor ? null : h('p', null, h('a', { href: 'downloads/SkillChat-v1.1.apk', download: 'SkillChat-v1.1.apk', text: 'Download the Android app (APK)' })),
+    window.Capacitor ? null : h('p', null, h('a', { href: 'downloads/SkillChat-v1.2.apk', download: 'SkillChat-v1.2.apk', text: 'Download the Android app (APK)' })),
     h('p', null, `Skill Chat ${VERSION}. Free and open source: `, h('a', { href: 'https://github.com/nm621532-byte/skill-chat-techbroz', target: '_blank', rel: 'noopener noreferrer', text: 'source code on GitHub' }), '.'),
     h('p', null, 'Made by Tech Bro Z. YouTube ', h('a', { href: 'https://www.youtube.com/@techbrozdeveloper', target: '_blank', rel: 'noopener noreferrer', text: '@techbrozdeveloper' }))));
 }
@@ -780,7 +782,8 @@ const AUTO_EXAMPLES = [
   'Make a one-page website for a chai cafe called Chai Point',
   'Write a 60-second YouTube Shorts script about 3 Python tips',
   'Write a short PDF-style summary of what machine learning is, for beginners',
-  'Create a professional email asking a client for payment'
+  'Create a professional email asking a client for payment',
+  'Is video ko YouTube aur Instagram pe dalo'
 ];
 const LIB = { busy: false, done: 0, total: 0, repo: '', error: null, listeners: new Set() };
 const libEmit = () => LIB.listeners.forEach(f => { try { f(); } catch {} });
@@ -1066,6 +1069,7 @@ function renderDo() {
   const go = () => {
     const t = ta.value.trim();
     if (!t) { ta.focus(); return; }
+    if (isPostVideoCommand(t)) { location.hash = '#/post?cmd=' + encodeURIComponent(t.slice(0, 500)); return; }
     if (!hasAnyKey()) { openSheet('Add your AI key', keySetupForm(() => { closeSheet(); go(); })); return; }
     const run = startRun(t);
     location.hash = '#/run?id=' + run.id;
@@ -1088,7 +1092,8 @@ function renderDo() {
     h('form', { class: 'cmdbox', onsubmit: e => { e.preventDefault(); go(); } }, ta, h('div', { class: 'cmd-actions' }, libLine, h('button', { class: 'btn primary big', type: 'submit', text: 'Do it' }))),
     h('div', { class: 'examples', role: 'list', 'aria-label': 'Example jobs' },
       AUTO_EXAMPLES.map(x => h('button', { class: 'chip', type: 'button', role: 'listitem', text: x, onclick: () => { ta.value = x; ta.focus(); } }))),
-    h('p', { class: 'honest small' }, 'Skill Chat writes text, code, websites and files you can preview, copy or download. It cannot open or control other apps on your phone.')));
+    h('a', { class: 'post-cta', href: '#/post', id: 'post-cta' }, h('span', { class: 'pc-ico', 'aria-hidden': 'true' }), h('span', { class: 'pc-t' }, h('strong', { text: 'Post a video' }), h('span', { class: 'small', text: 'YouTube, Instagram, WhatsApp and more, with AI captions' })), h('span', { class: 'pc-arr', 'aria-hidden': 'true', text: '→' })),
+    h('p', { class: 'honest small' }, 'Skill Chat writes text, code, websites and files you can preview, copy or download. It cannot control other apps on your phone: to post a video it opens the platform\'s app with your video ready, and you tap Post there.')));
   const runs = store.runs();
   if (runs.length) v.append(h('section', { class: 'block' }, h('h2', { text: 'Recent jobs' }),
     h('ul', { class: 'plain-list' }, runs.slice(0, 12).map(r => h('li', { class: 'hist' },
@@ -1097,7 +1102,7 @@ function renderDo() {
       h('button', { class: 'btn link danger', type: 'button', text: 'Delete', 'aria-label': 'Delete job ' + (r.title || r.command), onclick: e => { if (isRunning(r.id)) stopRun(); store.deleteRun(r.id); e.currentTarget.closest('li').remove(); } }))))));
   v.append(h('section', { class: 'block how' }, h('h2', { text: 'Prefer to pick a skill yourself?' }),
     h('p', null, h('a', { href: '#/explore', text: 'Explore skills' }), ' from any GitHub link and chat with one skill.'),
-    window.Capacitor ? null : h('p', { class: 'small' }, h('a', { href: 'downloads/SkillChat-v1.1.apk', download: 'SkillChat-v1.1.apk', text: 'Download the Android app (APK, 3 MB)' }), ' or tap your browser menu and choose Install app.')));
+    window.Capacitor ? null : h('p', { class: 'small' }, h('a', { href: 'downloads/SkillChat-v1.2.apk', download: 'SkillChat-v1.2.apk', text: 'Download the Android app (APK, 3 MB)' }), ' or tap your browser menu and choose Install app.')));
   indexLibrary();
   if (window.matchMedia('(pointer:fine)').matches) ta.focus();
 }
@@ -1226,6 +1231,309 @@ function renderRun(q) {
 }
 
 // ---------- boot ----------
+
+// ---------- Post a video (v1.2) ----------
+// The video stays in memory only (never uploaded to us, never saved). Drafts (platforms, captions, ticks) are saved on this device.
+const POST = { file: null, url: '', dur: 0, w: 0, h: 0, key: '', prepared: null, busy: false, ctrl: null, pending: null };
+function postDraft() { return Object.assign({ key: '', platforms: ['youtube', 'instagram'], about: '', lang: 'hinglish', meta: {}, done: {} }, store.get('post', {})); }
+function savePostDraft(d) { store.set('post', d); }
+function isNativeApp() { const C = window.Capacitor; return !!(C && C.isNativePlatform && C.isNativePlatform()); }
+function nativeShare() { const C = window.Capacitor; return isNativeApp() && C.Plugins && C.Plugins.VideoShare && C.Plugins.Filesystem ? C.Plugins : null; }
+
+// APK: write the picked video into the app's cache in chunks, so Android apps can read it through the FileProvider.
+async function prepareNativeVideo(onPct) {
+  const P = nativeShare(), f = POST.file;
+  if (POST.prepared && POST.prepared.key === POST.key) return POST.prepared.uri;
+  const ext = ((f.name.match(/\.([a-z0-9]{2,5})$/i) || [])[1] || 'mp4').toLowerCase();
+  const path = 'share/video-' + Date.now().toString(36) + '.' + ext;
+  try { await P.Filesystem.rmdir({ path: 'share', directory: 'CACHE', recursive: true }); } catch {}
+  const CH = 3 * 1024 * 1024;
+  for (let i = 0; i < f.size; i += CH) {
+    const bytes = new Uint8Array(await f.slice(i, i + CH).arrayBuffer());
+    const data = toBase64(bytes);
+    if (i === 0) await P.Filesystem.writeFile({ path, data, directory: 'CACHE', recursive: true });
+    else await P.Filesystem.appendFile({ path, data, directory: 'CACHE' });
+    onPct && onPct(Math.min(100, Math.round((i + CH) / f.size * 100)));
+  }
+  if (f.size === 0) await P.Filesystem.writeFile({ path, data: '', directory: 'CACHE', recursive: true });
+  const { uri } = await P.Filesystem.getUri({ path, directory: 'CACHE' });
+  POST.prepared = { key: POST.key, uri };
+  return uri;
+}
+
+// Returns 'app' | 'chooser' | 'shared' | 'cancelled' | 'unsupported' | 'failed'
+async function shareVideoTo(id, text, setMsg) {
+  const P = platform(id), f = POST.file;
+  if (!f) { toast('Pick a video first'); return 'failed'; }
+  const NP = nativeShare();
+  if (NP) {
+    try {
+      setMsg && setMsg('Getting the video ready…');
+      const uri = await prepareNativeVideo(p => setMsg && setMsg(`Getting the video ready… ${p}%`));
+      const res = await NP.VideoShare.share({ uri, text, pkg: P.pkg || '', alt: P.alt || [], mime: f.type || 'video/mp4', title: P.label });
+      setMsg && setMsg('');
+      toast('Caption copied — paste it', 4200);
+      return res && res.target === 'app' ? 'app' : 'chooser';
+    } catch (e) { setMsg && setMsg(''); toast('Could not open the share screen: ' + (e && e.message || e), 5000); return 'failed'; }
+  }
+  // Browser / installed PWA: Web Share API Level 2 (files). The caption also goes to the clipboard.
+  const copied = copyText(text);
+  const data = { files: [f], text, title: P.label };
+  if (navigator.canShare && navigator.share && navigator.canShare({ files: [f] })) {
+    try {
+      await navigator.share(data);
+      toast('Caption copied — paste it', 4200);
+      return 'shared';
+    } catch (e) {
+      if (e && e.name === 'AbortError') { toast('Share cancelled'); return 'cancelled'; }
+      // Some apps refuse text next to a file: try the video alone (caption is on the clipboard).
+      try { await navigator.share({ files: [f] }); toast('Caption copied — paste it', 4200); return 'shared'; }
+      catch (e2) { if (e2 && e2.name === 'AbortError') { toast('Share cancelled'); return 'cancelled'; } toast('Sharing failed: ' + (e2 && e2.message || e2), 5000); return 'failed'; }
+    }
+  }
+  await copied;
+  openSheet('This browser cannot share videos', h('div', null,
+    h('p', { text: 'Your caption is copied. Video sharing works in Chrome on Android or in the Skill Chat Android app.' }),
+    P.upload ? h('p', null, 'On a computer you can post from the website: ', h('a', { href: P.upload, target: '_blank', rel: 'noopener noreferrer', text: 'Open ' + P.label })) : null,
+    window.Capacitor ? null : h('p', null, h('a', { href: 'downloads/SkillChat-v1.2.apk', download: 'SkillChat-v1.2.apk', text: 'Download the Android app (APK)' }))));
+  return 'unsupported';
+}
+
+async function writeMeta(d, about, setMsg) {
+  const plats = d.platforms.slice();
+  POST.ctrl = new AbortController();
+  POST.busy = true;
+  try {
+    const res = await chatWithFallback(chain(), { system: META_SYSTEM, messages: metaMessages({ about, platforms: plats, lang: d.lang }), origin: location.origin, maxTokens: 2500 }, {
+      signal: POST.ctrl.signal,
+      onText: (dlt, full, c) => setMsg(`Writing with ${c.label}… ${full.length} characters`),
+      onSwitch: (next, cur) => setMsg(`${cur.label} did not answer, trying ${next.label}…`)
+    });
+    let r = parseMeta(res.text, plats);
+    if (!r.ok) throw new Error('The AI did not return captions in the right format. Tap Write with AI again, or try another model in Settings.');
+    for (const id of plats) if (r.meta[id] && (r.meta[id].title || r.meta[id].caption || r.meta[id].description)) d.meta[id] = r.meta[id];
+    d.about = about;
+    savePostDraft(d);
+    return { used: res.used, missing: r.missing };
+  } finally { POST.busy = false; POST.ctrl = null; }
+}
+
+function emptyMeta() { return { title: '', description: '', caption: '', tags: [], hashtags: [] }; }
+
+function renderPost(q) {
+  const v = view(); v.textContent = '';
+  const d = postDraft();
+  // Coming from Auto mode: "is video ko YouTube aur Instagram pe dalo"
+  const fromCmd = q.get('cmd');
+  if (fromCmd) {
+    const pl = detectPlatforms(fromCmd);
+    if (pl.length) d.platforms = pl;
+    const tp = topicFromCommand(fromCmd);
+    if (tp && tp.split(' ').length >= 2 && !d.about) d.about = tp;
+    savePostDraft(d);
+    history.replaceState(null, '', '#/post');
+  }
+  const save = () => savePostDraft(d);
+
+  // 1. video
+  const input = h('input', { type: 'file', id: 'video-in', accept: 'video/*', class: 'visually-hidden' });
+  const vidBox = h('div', { class: 'vid-box' });
+  const paintVideo = () => {
+    vidBox.textContent = '';
+    if (!POST.file) {
+      vidBox.append(h('label', { for: 'video-in', class: 'vid-pick', role: 'button', tabindex: '0', onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); } } },
+        h('span', { class: 'vid-plus', 'aria-hidden': 'true', text: '+' }), h('span', { class: 'vid-pick-t', text: 'Choose a video' }), h('span', { class: 'small muted', text: 'From your gallery or files' })));
+      return;
+    }
+    const f = POST.file;
+    const vid = h('video', { src: POST.url, controls: true, playsinline: true, preload: 'metadata', class: 'vid' });
+    const info = h('p', { class: 'vid-info' });
+    const hints = h('ul', { class: 'hints' });
+    const paintInfo = () => {
+      const orient = POST.w && POST.h ? (POST.h > POST.w ? 'vertical' : POST.h === POST.w ? 'square' : 'horizontal') : '';
+      info.textContent = [fmtDuration(POST.dur), fmtSize(f.size), POST.w ? `${POST.w}×${POST.h} ${orient}` : ''].filter(Boolean).join(' · ');
+      hints.textContent = '';
+      for (const t of videoHints(POST.dur, POST.w, POST.h)) hints.append(h('li', { text: t }));
+    };
+    vid.addEventListener('loadedmetadata', () => { POST.dur = vid.duration; POST.w = vid.videoWidth; POST.h = vid.videoHeight; paintInfo(); });
+    vid.addEventListener('error', () => { info.textContent = fmtSize(f.size) + ' · this phone cannot preview this format, but you can still share it'; });
+    paintInfo();
+    vidBox.append(vid, h('div', { class: 'vid-meta' }, h('p', { class: 'vid-name', text: f.name }), info, hints,
+      h('label', { for: 'video-in', class: 'btn ghost small', role: 'button', tabindex: '0', text: 'Change video', onkeydown: e => { if (e.key === 'Enter') input.click(); } })));
+  };
+  input.addEventListener('change', () => {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    if (f.type && !/^video\//.test(f.type)) { toast('That is not a video file'); input.value = ''; return; }
+    if (POST.url) URL.revokeObjectURL(POST.url);
+    POST.file = f; POST.url = URL.createObjectURL(f); POST.dur = 0; POST.w = 0; POST.h = 0; POST.prepared = null;
+    const k = fileKey(f);
+    if (d.key !== k) { d.key = k; d.done = {}; save(); }
+    POST.key = k;
+    paintVideo(); paintPost();
+  });
+  paintVideo();
+
+  // 2. platforms
+  const chipsBox = h('div', { class: 'chips plat-chips', role: 'group', 'aria-label': 'Platforms' });
+  const paintChips = () => {
+    chipsBox.textContent = '';
+    for (const p of PLATFORMS) {
+      const on = d.platforms.includes(p.id);
+      chipsBox.append(h('button', { type: 'button', class: 'chip plat' + (on ? ' on' : ''), 'aria-pressed': on ? 'true' : 'false', dataset: { p: p.id }, text: (on ? '✓ ' : '') + p.label,
+        onclick: () => { d.platforms = on ? d.platforms.filter(x => x !== p.id) : PLATFORM_IDS.filter(x => x === p.id || d.platforms.includes(x)); save(); paintChips(); paintCards(); paintQueue(); } }));
+    }
+  };
+  paintChips();
+
+  // 3. AI captions
+  const about = h('textarea', { id: 'post-about', rows: '3', placeholder: 'For example: making a cafe website with HTML and CSS in 10 minutes, for beginners', 'aria-label': 'What is the video about?' });
+  about.value = d.about || '';
+  about.addEventListener('input', () => { d.about = about.value; save(); });
+  const langSel = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Language' });
+  const paintLang = () => {
+    langSel.textContent = '';
+    for (const [k, lab] of [['hinglish', 'Hinglish'], ['english', 'English'], ['hindi', 'Hindi']])
+      langSel.append(h('button', { type: 'button', role: 'radio', 'aria-checked': d.lang === k ? 'true' : 'false', class: d.lang === k ? 'on' : '', text: lab, onclick: () => { d.lang = k; save(); paintLang(); } }));
+  };
+  paintLang();
+  const aiMsg = h('p', { class: 'ai-msg small', role: 'status', 'aria-live': 'polite' });
+  const aiBtn = h('button', { type: 'button', class: 'btn primary', id: 'write-ai', text: 'Write with AI' });
+  const stopBtn = h('button', { type: 'button', class: 'btn stop small', text: 'Stop', hidden: true, onclick: () => POST.ctrl && POST.ctrl.abort() });
+  const doWrite = async () => {
+    const a = about.value.trim();
+    if (!d.platforms.length) { aiMsg.textContent = 'Choose at least one platform first.'; return; }
+    if (a.length < 4) { aiMsg.textContent = 'Write a few words about the video first (the AI cannot watch it).'; about.focus(); return; }
+    if (!hasAnyKey()) { openSheet('Add your AI key', keySetupForm(() => { closeSheet(); doWrite(); })); return; }
+    aiBtn.disabled = true; stopBtn.hidden = false; aiMsg.classList.remove('err');
+    aiMsg.textContent = 'Writing titles and captions…';
+    try {
+      const r = await writeMeta(d, a, t => { aiMsg.textContent = t; });
+      aiMsg.textContent = `Done with ${r.used.label}. Check and edit below.` + (r.missing.length ? ` No text came back for ${r.missing.map(id => platform(id).label).join(', ')}: write it yourself or try again.` : '');
+      paintCards(); paintQueue();
+      const first = cardsBox.querySelector('.plat-card'); first && first.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      aiMsg.classList.add('err');
+      aiMsg.textContent = e && e.name === 'AbortError' ? 'Stopped.' : (e && e.message) || String(e);
+    } finally { aiBtn.disabled = false; stopBtn.hidden = true; }
+  };
+  aiBtn.addEventListener('click', doWrite);
+  const manualBtn = h('button', { type: 'button', class: 'btn ghost', text: 'Write it myself', onclick: () => { for (const id of d.platforms) if (!d.meta[id]) d.meta[id] = emptyMeta(); save(); paintCards(); paintQueue(); } });
+
+  // 4. per-platform cards
+  const cardsBox = h('div', { class: 'plat-cards' });
+  const fieldRow = (id, m, key, label, multi, hint) => {
+    const fid = `f-${id}-${key}`;
+    const val = key === 'tags' ? (m.tags || []).join(', ') : key === 'hashtags' ? (m.hashtags || []).join(' ') : m[key] || '';
+    const el = multi ? h('textarea', { id: fid, rows: key === 'description' ? '5' : '4' }) : h('input', { id: fid, type: 'text', autocomplete: 'off' });
+    el.value = val;
+    const count = h('span', { class: 'count' });
+    const upd = () => {
+      if (key === 'tags') m.tags = cleanTags(el.value);
+      else if (key === 'hashtags') m.hashtags = el.value.split(/[\s,]+/).map(x => x.trim()).filter(Boolean).map(x => x.startsWith('#') ? x : '#' + x);
+      else m[key] = el.value;
+      count.textContent = key === 'title' ? `${el.value.length}/${id === 'youtube' ? YT_TITLE_MAX : 100}` : key === 'hashtags' ? `${m.hashtags.length}` : key === 'tags' ? `${m.tags.length} tags` : `${el.value.length}`;
+      count.classList.toggle('over', key === 'title' && id === 'youtube' && el.value.length > YT_TITLE_MAX);
+      save();
+      const card = el.closest('.plat-card'); card && card._warn && card._warn();
+    };
+    el.addEventListener('input', upd);
+    el.addEventListener('blur', () => { if (key === 'hashtags') { m.hashtags = cleanHashtags(el.value.split(/[\s,]+/), 'other').slice(0, 30); el.value = m.hashtags.join(' '); save(); } });
+    setTimeout(upd, 0);
+    return h('div', { class: 'fld' },
+      h('div', { class: 'fld-head' }, h('label', { for: fid, text: label }), count,
+        h('button', { type: 'button', class: 'btn link small copy', text: 'Copy', 'aria-label': `Copy ${label} for ${platform(id).label}`, onclick: e => copyText(el.value, e.currentTarget) })),
+      el, hint ? h('p', { class: 'small muted', text: hint }) : null);
+  };
+  const paintCards = () => {
+    cardsBox.textContent = '';
+    const ids = d.platforms.filter(id => d.meta[id]);
+    if (!ids.length) { cardsBox.append(h('p', { class: 'muted small', text: 'Titles and captions appear here. Tap Write with AI, or Write it myself.' })); return; }
+    for (const id of ids) {
+      const P = platform(id), m = d.meta[id];
+      const yt = id === 'youtube' || id === 'shorts';
+      const warnBox = h('ul', { class: 'warns' });
+      const doneMark = h('span', { class: 'done-mark' + (d.done[id] ? ' on' : ''), text: d.done[id] ? '✓ Posted' : '' });
+      const postMsg = h('p', { class: 'small post-msg', role: 'status', 'aria-live': 'polite' });
+      const postBtn = h('button', { type: 'button', class: 'btn primary post-btn', dataset: { p: id }, text: (d.done[id] ? 'Post again to ' : 'Post to ') + P.label });
+      postBtn.addEventListener('click', () => doPost(id, postBtn, postMsg));
+      const card = h('article', { class: 'plat-card' + (d.done[id] ? ' is-done' : ''), id: 'card-' + id, dataset: { p: id } },
+        h('header', { class: 'pc-head' }, h('h3', { text: P.label }), doneMark,
+          h('label', { class: 'tick' }, h('input', { type: 'checkbox', checked: !!d.done[id], 'aria-label': `Mark ${P.label} as posted`, onchange: e => { d.done[id] = e.currentTarget.checked; save(); paintCards(); paintQueue(); } }), 'Done')),
+        yt ? fieldRow(id, m, 'title', 'Title', false) : null,
+        yt ? fieldRow(id, m, 'description', 'Description', true) : fieldRow(id, m, 'caption', 'Caption', true),
+        id === 'youtube' ? fieldRow(id, m, 'tags', 'Tags (comma separated)', false, 'Paste these in YouTube Studio: Show more, Tags.') : null,
+        fieldRow(id, m, 'hashtags', 'Hashtags', false),
+        warnBox,
+        h('div', { class: 'pc-actions' }, postBtn,
+          h('button', { type: 'button', class: 'btn ghost small', text: 'Copy all', onclick: e => copyText(shareText(id, m), e.currentTarget) })),
+        postMsg,
+        h('p', { class: 'small muted', text: (P.note ? P.note + ' ' : '') + (isNativeApp() ? `Opens ${P.label === 'Other' ? 'the share screen' : 'the ' + P.label + ' app'} with your video. The caption is copied: paste it there, then tap Post in that app.` : 'Your phone\'s share screen opens with the video: choose the app. The caption is copied: paste it there, then tap Post in that app.') }));
+      card._warn = () => { warnBox.textContent = ''; for (const w of checkMeta(id, m)) warnBox.append(h('li', { text: w })); };
+      setTimeout(card._warn, 0);
+      cardsBox.append(card);
+    }
+  };
+
+  // "Post to all" queue
+  const queueBox = h('div', { class: 'queue', role: 'region', 'aria-label': 'Post to all' });
+  const paintQueue = () => {
+    queueBox.textContent = '';
+    const order = d.platforms.filter(id => d.meta[id]);
+    if (!order.length) { queueBox.hidden = true; return; }
+    queueBox.hidden = false;
+    const nDone = order.filter(id => d.done[id]).length;
+    const next = nextInQueue(order, d.done);
+    queueBox.append(h('ol', { class: 'q-list' }, order.map(id => h('li', { class: d.done[id] ? 'q-done' : id === next ? 'q-next' : '', dataset: { p: id } },
+      h('span', { class: 'q-tick', 'aria-hidden': 'true', text: d.done[id] ? '✓' : '' }), platform(id).label, d.done[id] ? h('span', { class: 'visually-hidden', text: ' (posted)' }) : null))));
+    const qmsg = h('p', { class: 'small q-msg', role: 'status', 'aria-live': 'polite' });
+    queueBox.append(h('div', { class: 'q-row' },
+      h('p', { class: 'q-count', text: `${nDone} of ${order.length} posted` }),
+      next ? h('button', { type: 'button', class: 'btn primary big', id: 'post-all', text: nDone ? `Next: ${platform(next).label}` : 'Post to all', onclick: e => doPost(next, e.currentTarget, qmsg) })
+        : h('span', { class: 'q-all', text: 'All done 🎉' }),
+      nDone ? h('button', { type: 'button', class: 'btn link small', text: 'Reset ticks', onclick: () => { d.done = {}; save(); paintCards(); paintQueue(); } }) : null), qmsg);
+  };
+
+  const doPost = async (id, btn, msgEl) => {
+    if (!POST.file) { toast('Choose a video first'); const pk = vidBox.querySelector('.vid-pick'); pk && pk.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    const m = d.meta[id] || emptyMeta();
+    btn.disabled = true;
+    const r = await shareVideoTo(id, shareText(id, m), t => { msgEl.textContent = t; });
+    btn.disabled = false;
+    if (r === 'shared' || r === 'app' || r === 'chooser') {
+      d.done[id] = true; save();
+      POST.pending = r === 'shared' ? null : id;
+      paintCards(); paintQueue();
+      const order = d.platforms.filter(x => d.meta[x]);
+      const nx = nextInQueue(order, d.done);
+      const qm = queueBox.querySelector('.q-msg');
+      if (qm) qm.textContent = nx ? `${platform(id).label} opened. When you are back, tap Next: ${platform(nx).label}.` : `${platform(id).label} opened. That was the last one.`;
+    }
+  };
+
+  // Coming back from the platform app (APK): bring the queue into view.
+  const onVis = () => {
+    if (!view().contains(queueBox)) { document.removeEventListener('visibilitychange', onVis); return; }
+    if (document.visibilityState === 'visible' && POST.pending) { POST.pending = null; paintQueue(); queueBox.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  };
+  document.addEventListener('visibilitychange', onVis);
+
+  const paintPost = () => { paintCards(); paintQueue(); };
+  v.append(
+    h('section', { class: 'post-hero' },
+      h('h1', { text: 'Post a video' }),
+      h('p', { class: 'lead', text: 'Pick a video, choose where it goes, and let AI write the titles and captions. Tap Post: the platform\'s own app opens with your video ready, and you tap Post there.' })),
+    h('section', { class: 'step-card' }, h('h2', null, h('span', { class: 'num', text: '1' }), 'Your video'), input, vidBox),
+    h('section', { class: 'step-card' }, h('h2', null, h('span', { class: 'num', text: '2' }), 'Where to post'), chipsBox),
+    h('section', { class: 'step-card' }, h('h2', null, h('span', { class: 'num', text: '3' }), 'Titles and captions'),
+      h('label', { for: 'post-about', class: 'lbl', text: 'What is the video about?' }), about,
+      h('div', { class: 'lang-row' }, h('span', { class: 'lbl inline', text: 'Language' }), langSel),
+      h('div', { class: 'ai-row' }, aiBtn, stopBtn, manualBtn), aiMsg),
+    h('section', { class: 'step-card' }, h('h2', null, h('span', { class: 'num', text: '4' }), 'Post'), cardsBox, queueBox),
+    h('p', { class: 'honest small' }, 'Skill Chat cannot press Post for you: each platform only allows that inside its own app (or with its own developer approval). Your video never leaves your phone except into the app you choose.'));
+  paintPost();
+}
+
 function boot() {
   if (!window.marked || !window.DOMPurify) { setTimeout(boot, 30); return; }
   applyTheme();
