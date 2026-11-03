@@ -77,7 +77,7 @@ with sync_playwright() as p:
     page.evaluate("() => { localStorage.setItem('sc.onboarded','true'); localStorage.setItem('sc.slots', JSON.stringify([{id:'or1',provider:'openrouter',key:'test-key-harness-only',model:'',base:''}])); }")
     page.reload(); page.wait_for_selector('#cmd')
     check('home is the command box', page.locator('h1').first.inner_text() == 'What do you want done?')
-    check('honest note about other apps', 'cannot open or control other apps' in page.locator('.honest').inner_text())
+    check('honest note about other apps', 'cannot control other apps' in page.locator('.honest').inner_text())
     page.wait_for_function("() => /\\d+ skills ready/.test(document.querySelector('.lib-count')?.textContent || '')", timeout=60000)
     nlib = int(re.search(r'(\d+) skills', page.locator('.lib-count').inner_text()).group(1))
     check('library indexed anthropics/skills', nlib >= 10, nlib)
