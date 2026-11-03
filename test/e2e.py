@@ -32,6 +32,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(300)
     check('onboarding closes and stays closed', page.locator('.sheet').count() == 0)
     page.screenshot(path=f'{SHOTS}/02_home.png', full_page=True)
+    page.goto(BASE + '#/explore'); page.wait_for_selector('#gh-url')
 
     # 2. bad URL
     page.fill('#gh-url', 'https://gitlab.com/foo/bar'); page.click('text=Find skills')
@@ -262,7 +263,7 @@ with sync_playwright() as p:
     page.screenshot(path=f'{SHOTS}/18_library_dark.png')
     page.goto(skill_url); page.wait_for_selector('#skill-md .md', timeout=20000); page.wait_for_timeout(600)
     page.screenshot(path=f'{SHOTS}/19_skill_dark.png')
-    page.goto(BASE + '#/'); page.wait_for_selector('.hero')
+    page.goto(BASE + '#/explore'); page.wait_for_selector('.hero')
     page.screenshot(path=f'{SHOTS}/20_home_dark.png')
     # keys never in the page source / app files
     check('no secrets in app shell', 'sk-or-v1' not in page.content().replace('sk-or-...', ''))

@@ -1,12 +1,12 @@
 {
   "name": "skill-chat-techbroz",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Skill Chat: use any AI skill (SKILL.md) from GitHub with your own API key",
+  "description": "Skill Chat: type a job, it picks the right AI skill (SKILL.md) from GitHub and does it step by step. Or chat with any skill. Your own API key.",
   "scripts": {
     "start": "python3 -m http.server 8080",
-    "test": "node test/unit.mjs"
+    "test": "node test/unit.mjs && node test/unit_auto.mjs"
   },
   "license": "MIT"
 }

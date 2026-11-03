@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; base-uri *; form-action 'none'">
+<title>Preview</title>
+<script>
+// Skill Chat preview frame. The app loads this page in <iframe sandbox="allow-scripts ..."> WITHOUT
+// allow-same-origin, so whatever runs here has an opaque origin: it cannot read the app's storage,
+// keys, chats or page. It receives the HTML once from its parent and writes it into itself.
+(function () {
+  var done = false;
+  var SHIM = '<script>(function(){function mk(){var m={};return{getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null},setItem:function(k,v){m[String(k)]=String(v)},removeItem:function(k){delete m[String(k)]},clear:function(){m={}},key:function(i){return Object.keys(m)[i]||null},get length(){return Object.keys(m).length}}}' +
+    '["localStorage","sessionStorage"].forEach(function(n){try{window[n].length}catch(e){try{Object.defineProperty(window,n,{value:mk(),configurable:true})}catch(_){}}});})();<\/script>';
+  addEventListener('message', function (e) {
+    if (done || e.source !== window.parent || !e.data || e.data.type !== 'skillchat-preview') return;
+    done = true;
+    var html = String(e.data.html || '');
+    var m = html.match(/<head[^>]*>/i) || html.match(/<html[^>]*>/i);
+    if (m) html = html.slice(0, m.index + m[0].length) + SHIM + html.slice(m.index + m[0].length);
+    else if (/^\s*<!doctype/i.test(html)) html = html.replace(/^\s*<!doctype[^>]*>/i, function (d) { return d + SHIM; });
+    else html = SHIM + html;
+    document.open(); document.write(html); document.close();
+  });
+})();
+</script>
+</head>
+<body style="font:16px system-ui;color:#575C7E;padding:1rem">Loading preview…</body>
+</html>

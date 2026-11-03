@@ -3,8 +3,11 @@ import { splitFrontMatter } from './lib/frontmatter.js';
 import { PROVIDERS, chatWithFallback, listModels } from './lib/providers.js';
 import { store, ghCache } from './lib/store.js';
 import { renderMarkdown, copyText, addCopyButtons } from './lib/md.js';
+import { ROUTER_SYSTEM, MAX_PICK, routerMessages, parseRoute, shortlist, localPick, agentSystem, continueMessage, readStatus, stripStatus, nextMove, compactHistory, collectFiles, previewDoc } from './lib/agent.js';
+import { makeZip } from './lib/zip.js';
+import { indexRepo, referencedFiles } from './lib/library.js';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 const PAGE = 40;
 const CONTEXT_CAP = 150000; // characters of skill text sent to the AI
 const EXAMPLES = [
@@ -143,17 +146,21 @@ function maybeOnboard() {
 // ---------- router ----------
 function route() {
   if (chatAbort && !location.hash.startsWith('#/chat')) { chatAbort.abort(); chatAbort = null; }
+  RUN.listeners.clear(); LIB.listeners.clear();
   closeSheet();
   const [path, qs] = (location.hash.slice(1) || '/').split('?');
   const q = new URLSearchParams(qs || '');
   document.body.classList.toggle('in-chat', path === '/chat');
-  const navKey = path === '/library' ? 'library' : path === '/settings' ? 'settings' : 'explore';
+  const isDo = (path === '/' && !q.get('u')) || path === '/run';
+  const navKey = path === '/library' ? 'library' : path === '/settings' ? 'settings' : isDo ? 'do' : 'explore';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === navKey));
   if (path === '/library') return renderLibrary();
   if (path === '/settings') return renderSettings();
   if (path === '/skill') return renderSkill(q);
   if (path === '/chat') return renderChat(q);
-  return renderExplore(q);
+  if (path === '/run') return renderRun(q);
+  if (path === '/explore' || q.get('u')) return renderExplore(q);
+  return renderDo();
 }
 
 // ---------- explore ----------
@@ -166,7 +173,7 @@ function renderExplore(q) {
   const go = val => {
     const t = String(val || '').trim();
     if (!t) { input.focus(); return; }
-    const nh = '#/?u=' + encodeURIComponent(t);
+    const nh = '#/explore?u=' + encodeURIComponent(t);
     if (location.hash === nh) loadRepo(t, true); else location.hash = nh;
   };
   const intro = h('section', { class: 'hero' + (url ? ' slim' : '') },
@@ -184,14 +191,14 @@ function renderExplore(q) {
     const rec = store.recents();
     if (rec.length) {
       v.append(h('section', { class: 'block' }, h('h2', { text: 'Recent repositories' }),
-        h('ul', { class: 'plain-list' }, rec.map(r => h('li', null, h('a', { class: 'rec', href: '#/?u=' + encodeURIComponent(r.url) }, h('span', { class: 'rec-name', text: r.label }), h('span', { class: 'rec-when', text: fmtWhen(r.at) })))))));
+        h('ul', { class: 'plain-list' }, rec.map(r => h('li', null, h('a', { class: 'rec', href: '#/explore?u=' + encodeURIComponent(r.url) }, h('span', { class: 'rec-name', text: r.label }), h('span', { class: 'rec-when', text: fmtWhen(r.at) })))))));
     }
     v.append(h('section', { class: 'block how' }, h('h2', { text: 'How it works' }),
       h('ol', { class: 'how-steps' },
         h('li', null, h('strong', { text: 'Paste a GitHub link. ' }), 'Skill Chat finds every SKILL.md in it.'),
         h('li', null, h('strong', { text: 'Pick a skill. ' }), 'Read it, and tick extra files you want the AI to see.'),
         h('li', null, h('strong', { text: 'Chat. ' }), 'The skill becomes the AI\u2019s instructions. Your key stays on this device.')),
-      window.Capacitor ? null : h('p', { class: 'small' }, h('a', { href: 'downloads/SkillChat-v1.0.apk', download: 'SkillChat-v1.0.apk', text: 'Download the Android app (APK, 3 MB)' }), ' or tap your browser menu and choose Install app.')));
+      window.Capacitor ? null : h('p', { class: 'small' }, h('a', { href: 'downloads/SkillChat-v1.1.apk', download: 'SkillChat-v1.1.apk', text: 'Download the Android app (APK, 3 MB)' }), ' or tap your browser menu and choose Install app.')));
   }
 }
 
@@ -229,7 +236,8 @@ function renderResults() {
     h('div', { class: 'repo-line' },
       h('a', { class: 'repo-name', href: blobUrl(r.owner, r.repo, r.ref, r.path || '', 'tree').replace(/\/$/, ''), target: '_blank', rel: 'noopener noreferrer', text: `${r.owner}/${r.repo}` }),
       h('span', { class: 'badge', text: r.ref }),
-      r.path ? h('span', { class: 'badge soft', text: r.path }) : null),
+      r.path ? h('span', { class: 'badge soft', text: r.path }) : null,
+      S.skills.length ? h('button', { class: 'btn link small add-lib', type: 'button', text: 'Add to Auto library', onclick: e => { if (addLibraryRepo(S.url)) e.currentTarget.textContent = 'Added to Auto library'; } }) : null),
     r.info && r.info.description ? h('p', { class: 'repo-desc', text: r.info.description }) : null);
   box.append(head);
   if (r.tree && r.tree.truncated) box.append(h('p', { class: 'note warn', text: 'This repository is very large, so GitHub sent only part of its file list. Some skills may be missing. Paste a link to a sub-folder to see all skills inside it.' }));
@@ -424,7 +432,7 @@ async function renderSkill(q) {
 }
 
 function backLink() {
-  return h('a', { class: 'back', href: S.url ? '#/?u=' + encodeURIComponent(S.url) : '#/', onclick: e => { if (history.length > 1 && document.referrer !== '' ) { /* keep default */ } }, text: '‹ Back to skills' });
+  return h('a', { class: 'back', href: S.url ? '#/explore?u=' + encodeURIComponent(S.url) : '#/explore', onclick: e => { if (history.length > 1 && document.referrer !== '' ) { /* keep default */ } }, text: '‹ Back to skills' });
 }
 
 function metaTable(data) {
@@ -632,7 +640,7 @@ function renderLibrary() {
     h('ul', { class: 'plain-list' }, chats.map(([id, x]) => h('li', null, h('a', { class: 'rec', href: skillHash(x, 'chat') }, h('span', { class: 'rec-name', text: x.name }), h('span', { class: 'rec-when', text: fmtWhen(x.at) })))))));
   const rec = store.recents();
   if (rec.length) v.append(h('section', { class: 'block' }, h('h2', { text: 'Recent repositories' }),
-    h('ul', { class: 'plain-list' }, rec.map(r => h('li', null, h('a', { class: 'rec', href: '#/?u=' + encodeURIComponent(r.url) }, h('span', { class: 'rec-name', text: r.label }), h('span', { class: 'rec-when', text: fmtWhen(r.at) }))))),
+    h('ul', { class: 'plain-list' }, rec.map(r => h('li', null, h('a', { class: 'rec', href: '#/explore?u=' + encodeURIComponent(r.url) }, h('span', { class: 'rec-name', text: r.label }), h('span', { class: 'rec-when', text: fmtWhen(r.at) }))))),
     h('button', { class: 'btn link', type: 'button', text: 'Clear recent repositories', onclick: () => { store.clearRecents(); renderLibrary(); } })));
 }
 
@@ -668,6 +676,13 @@ function renderSettings() {
   provSec.append(ul, addBox);
   v.append(provSec);
 
+  const ms = h('input', { type: 'number', id: 'max-steps', min: '1', max: '15', value: String(store.auto().maxSteps), 'aria-label': 'Maximum steps per job', inputmode: 'numeric' });
+  ms.addEventListener('change', () => { const n = Math.max(1, Math.min(15, parseInt(ms.value, 10) || 8)); ms.value = String(n); const a = store.auto(); a.maxSteps = n; store.setAuto(a); toast('Saved'); });
+  v.append(h('section', { class: 'block' }, h('h2', { text: 'Auto mode' }),
+    h('p', { class: 'small muted', text: 'Auto mode reads the name and description of every skill in these repositories, picks the best ones for your job, and works in steps until done.' }),
+    h('label', { class: 'lbl', for: 'max-steps', text: 'Maximum steps per job (1 to 15)' }), ms,
+    h('h3', { class: 'lbl', text: 'Skill library' }), libraryManager()));
+
   const tok = h('input', { type: 'password', id: 'gh-token', autocomplete: 'off', placeholder: store.ghToken() ? 'Token saved' : 'ghp_... (optional)', 'aria-label': 'GitHub token' });
   v.append(h('section', { class: 'block' }, h('h2', { text: 'GitHub token (optional)' }),
     h('p', { class: 'small muted', text: 'Without a token GitHub allows 60 lookups per hour. A token raises that to 5,000. Public repos need no permissions.' }),
@@ -688,7 +703,7 @@ function renderSettings() {
       if (confirm('Delete all keys, chats, saved skills and settings from this device?')) { store.wipeAll(); applyTheme(); toast('All data deleted'); renderSettings(); }
     } })));
   v.append(h('section', { class: 'block about' }, h('h2', { text: 'About' }),
-    window.Capacitor ? null : h('p', null, h('a', { href: 'downloads/SkillChat-v1.0.apk', download: 'SkillChat-v1.0.apk', text: 'Download the Android app (APK)' })),
+    window.Capacitor ? null : h('p', null, h('a', { href: 'downloads/SkillChat-v1.1.apk', download: 'SkillChat-v1.1.apk', text: 'Download the Android app (APK)' })),
     h('p', null, `Skill Chat ${VERSION}. Free and open source: `, h('a', { href: 'https://github.com/nm621532-byte/skill-chat-techbroz', target: '_blank', rel: 'noopener noreferrer', text: 'source code on GitHub' }), '.'),
     h('p', null, 'Made by Tech Bro Z. YouTube ', h('a', { href: 'https://www.youtube.com/@techbrozdeveloper', target: '_blank', rel: 'noopener noreferrer', text: '@techbrozdeveloper' }))));
 }
@@ -756,6 +771,458 @@ async function browseModels(sl, modelIn, msg) {
   openSheet(PROVIDERS[p].label + ' models', h('div', null, search,
     anyFree ? h('label', { class: 'check' }, freeOnly, ' Free models only') : null, ul), { wide: true });
   draw();
+}
+
+// ================= AUTO MODE (v1.1) =================
+const AUTO_CAP = 70000;      // characters of skill text sent in auto mode
+const EXTRA_PER_SKILL = 20000;
+const AUTO_EXAMPLES = [
+  'Make a one-page website for a chai cafe called Chai Point',
+  'Write a 60-second YouTube Shorts script about 3 Python tips',
+  'Write a short PDF-style summary of what machine learning is, for beginners',
+  'Create a professional email asking a client for payment'
+];
+const LIB = { busy: false, done: 0, total: 0, repo: '', error: null, listeners: new Set() };
+const libEmit = () => LIB.listeners.forEach(f => { try { f(); } catch {} });
+function libSkills() {
+  const seen = new Set(), out = [];
+  for (const r of store.lib().repos) for (const s of r.skills || []) if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
+  return out;
+}
+async function indexLibrary(force = false) {
+  if (LIB.busy) return;
+  const lib = store.lib();
+  const todo = lib.repos.filter(r => force || !Array.isArray(r.skills));
+  if (!todo.length) return;
+  LIB.busy = true; LIB.error = null; libEmit();
+  const g = force ? makeGitHub({ getToken: () => store.ghToken(), cache: null }) : gh;
+  for (const r of todo) {
+    LIB.repo = r.label || r.url; LIB.done = 0; LIB.total = 0; libEmit();
+    try {
+      const res = await indexRepo(g, r.url, { onProgress: (d, t) => { LIB.done = d; LIB.total = t; libEmit(); } });
+      const cur = store.lib();
+      cur.repos = cur.repos.map(x => x.url === r.url ? { ...res, url: r.url } : x);
+      store.setLib(cur);
+    } catch (e) {
+      LIB.error = e;
+      const cur = store.lib();
+      cur.repos = cur.repos.map(x => x.url === r.url ? { ...x, error: e.message, at: Date.now() } : x);
+      store.setLib(cur);
+      if (e.kind === 'rate_limit') break;
+    }
+  }
+  LIB.busy = false; libEmit();
+}
+function addLibraryRepo(url) {
+  let parsed;
+  try { parsed = parseGitHubUrl(url); } catch (e) { toast(e.message); return false; }
+  const lib = store.lib();
+  const norm = u => u.replace(/\/+$/, '').replace(/\.git$/, '').toLowerCase();
+  if (lib.repos.some(r => norm(r.url) === norm(url))) { toast('Already in your skill library'); return false; }
+  if (lib.repos.length >= 12) { toast('Your library can hold 12 repositories. Remove one first.'); return false; }
+  lib.repos.push({ url: url.trim(), label: `${parsed.owner}/${parsed.repo}` });
+  store.setLib(lib); toast('Added. Reading its skills…');
+  indexLibrary();
+  return true;
+}
+
+function libraryManager() {
+  const box = h('div', { class: 'libman' });
+  const input = h('input', { type: 'url', inputmode: 'url', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: 'https://github.com/owner/repo', 'aria-label': 'GitHub link to add' });
+  const draw = () => {
+    box.textContent = '';
+    const lib = store.lib();
+    box.append(h('ul', { class: 'plain-list lib-list' }, lib.repos.map(r => h('li', { class: 'lib-repo' },
+      h('div', { class: 'lib-txt' }, h('span', { class: 'rec-name', text: r.label || r.url }),
+        h('span', { class: 'small muted', text: r.error ? 'Could not read: ' + r.error : Array.isArray(r.skills) ? `${r.skills.length} skills, updated ${fmtWhen(r.at)}` : 'Not loaded yet' })),
+      h('button', { class: 'btn link danger', type: 'button', text: 'Remove', 'aria-label': 'Remove ' + (r.label || r.url), onclick: () => {
+        const l = store.lib(); l.repos = l.repos.filter(x => x.url !== r.url); store.setLib(l); draw(); libEmit();
+      } })))));
+    if (!lib.repos.length) box.append(h('p', { class: 'small muted', text: 'No repositories. Auto mode will work as a general assistant.' }));
+    if (LIB.busy) box.append(h('p', { class: 'small', text: `Reading ${LIB.repo}: ${LIB.done} of ${LIB.total || '?'} skills…` }));
+    box.append(h('label', { class: 'lbl', text: 'Add a skills repository' }),
+      h('form', { class: 'row', onsubmit: e => { e.preventDefault(); if (input.value.trim() && addLibraryRepo(input.value.trim())) { input.value = ''; draw(); } } },
+        input, h('button', { class: 'btn ghost', type: 'submit', text: 'Add' })),
+      h('div', { class: 'row' }, h('button', { class: 'btn ghost small', type: 'button', disabled: LIB.busy, text: LIB.busy ? 'Refreshing…' : 'Refresh library', onclick: () => indexLibrary(true) }),
+        lib.repos.some(r => /anthropics\/skills/i.test(r.url)) ? null : h('button', { class: 'btn link', type: 'button', text: 'Add anthropics/skills', onclick: () => { addLibraryRepo('https://github.com/anthropics/skills'); draw(); } })));
+  };
+  const l = () => { if (box.isConnected) draw(); else LIB.listeners.delete(l); };
+  LIB.listeners.add(l);
+  draw();
+  return box;
+}
+
+// ---------- the run engine ----------
+const RUN = { run: null, ctrl: null, listeners: new Set() };
+const runEmit = () => RUN.listeners.forEach(f => { try { f(); } catch {} });
+function newRunId() { return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function isRunning(id) { return RUN.run && RUN.run.id === id && RUN.ctrl; }
+function stopRun() { if (RUN.ctrl) RUN.ctrl.abort(); }
+function saveRunNow(run) { run.updated = Date.now(); store.saveRun(run); }
+
+function startRun(command, { skills = null } = {}) {
+  const run = { id: newRunId(), created: Date.now(), updated: Date.now(), command, title: '', status: 'routing', skills: [], plan: [], routedBy: '', log: [{ kind: 'user', text: command }], maxSteps: Math.max(1, Math.min(15, Number(store.auto().maxSteps) || 8)) };
+  if (skills) { run.skills = skills; run.routedBy = 'user'; run.status = 'running'; }
+  saveRunNow(run);
+  drive(run, { route: !skills });
+  return run;
+}
+
+async function routeRun(run, signal) {
+  const all = libSkills();
+  if (!all.length) { run.skills = []; run.routedBy = 'none'; return; }
+  const cands = shortlist(run.command, all);
+  let picked = null;
+  try {
+    const res = await chatWithFallback(chain(), { system: ROUTER_SYSTEM, messages: routerMessages(run.command, cands), origin: location.origin, maxTokens: 600 }, { signal });
+    const r = parseRoute(res.text, cands);
+    if (r.ok) { picked = r.skills; run.plan = r.plan; run.title = r.title; run.routedBy = 'ai'; run.routeVia = `${res.used.label} (${res.used.model})`; }
+  } catch (e) { if (e && e.name === 'AbortError') throw e; run.routeNote = 'Skill picking failed (' + e.message + '), so the app picked by keywords.'; }
+  if (!picked) { picked = localPick(run.command, all); run.routedBy = 'local'; }
+  run.skills = picked.map(s => ({ id: s.id, owner: s.owner, repo: s.repo, ref: s.ref, path: s.path, dir: s.dir, name: s.name, description: s.description, files: s.files || [] }));
+}
+
+async function loadRunSkills(skills) {
+  const out = []; let total = 0;
+  for (const s of skills) {
+    let text = '';
+    try { text = await gh.raw(s.owner, s.repo, s.ref, s.path, { maxBytes: 60000 }); } catch (e) { text = `[could not load ${s.path}: ${e.message}]`; }
+    if (total + text.length > AUTO_CAP) text = text.slice(0, Math.max(2000, AUTO_CAP - total)) + '\n[... cut to fit ...]';
+    total += text.length;
+    const extra = []; let used = 0;
+    for (const [rel] of referencedFiles(text, s.files)) {
+      if (used >= EXTRA_PER_SKILL || total >= AUTO_CAP) break;
+      try {
+        const t = await gh.raw(s.owner, s.repo, s.ref, (s.dir ? s.dir + '/' : '') + rel, { maxBytes: 15000 });
+        if (used + t.length > EXTRA_PER_SKILL || total + t.length > AUTO_CAP) continue;
+        used += t.length; total += t.length; extra.push({ rel, text: t });
+      } catch {}
+    }
+    out.push({ ...s, text, extra });
+  }
+  return out;
+}
+
+function apiMessages(run) {
+  const msgs = [];
+  for (const e of run.log) {
+    if (e.kind === 'user' || e.kind === 'cont') msgs.push({ role: 'user', content: e.text });
+    else if (e.kind === 'step' && e.text) msgs.push({ role: 'assistant', content: e.text });
+  }
+  // providers need alternating turns: merge accidental doubles
+  const merged = [];
+  for (const m of msgs) { const last = merged[merged.length - 1]; if (last && last.role === m.role) last.content += '\n\n' + m.content; else merged.push({ ...m }); }
+  return compactHistory(merged);
+}
+
+async function drive(run, { route = false } = {}) {
+  if (RUN.ctrl) RUN.ctrl.abort();
+  const ctrl = new AbortController();
+  RUN.run = run; RUN.ctrl = ctrl; run.error = null;
+  if (!hasAnyKey()) { run.status = 'nokey'; RUN.ctrl = null; saveRunNow(run); runEmit(); return; }
+  try {
+    if (route) { run.status = 'routing'; runEmit(); await routeRun(run, ctrl.signal); saveRunNow(run); }
+    run.status = 'running'; runEmit();
+    const loaded = await loadRunSkills(run.skills);
+    const sys = agentSystem(loaded, run.maxSteps);
+    // drop a failed or empty last step: it is done again
+    while (run.log.length > 1 && run.log[run.log.length - 1].kind === 'step' && (run.log[run.log.length - 1].failed || !run.log[run.log.length - 1].text)) run.log.pop();
+    run.log.forEach(e => { if (e.kind === 'step' && e.status === 'working') e.status = 'stopped'; });
+    // step number inside the current segment (since the last user message)
+    let lastUser = 0; run.log.forEach((e, i) => { if (e.kind === 'user') lastUser = i; });
+    let step = run.log.slice(lastUser).filter(e => e.kind === 'step').length;
+    if (run.log[run.log.length - 1].kind === 'step') { // resume after stop/max: ask to continue
+      run.log.push({ kind: 'cont', text: continueMessage(step + 1, step + run.maxSteps, false) });
+    }
+    const limit = step + run.maxSteps;
+    for (;;) {
+      step++;
+      const entry = { kind: 'step', n: step, text: '', status: 'working' };
+      run.log.push(entry); runEmit();
+      let notes = [];
+      const res = await chatWithFallback(chain(), { system: sys, messages: apiMessages(run), origin: location.origin }, {
+        signal: ctrl.signal,
+        onText: (d, full) => { entry.text = full; runEmit(); },
+        onSwitch: (next, cur, err) => { notes.push(`Switched to ${next.label}: ${err.message}`); toast(`Switched to ${next.label}`); }
+      });
+      entry.text = res.text; entry.via = `${res.used.label} (${res.used.model})`; if (notes.length) entry.note = notes.join(' ');
+      const st = readStatus(res.text);
+      entry.status = st === 'CUT' ? 'cut' : 'done';
+      const mv = nextMove(st, step, limit);
+      saveRunNow(run);
+      if (mv === 'done') { run.status = 'done'; break; }
+      if (mv === 'max') { run.status = 'max'; break; }
+      run.log.push({ kind: 'cont', text: continueMessage(step + 1, limit, mv === 'cut') });
+    }
+  } catch (e) {
+    const last = run.log[run.log.length - 1];
+    if (e && e.name === 'AbortError') {
+      run.status = 'stopped';
+      if (last && last.kind === 'step') { last.status = 'stopped'; if (!last.text) run.log.pop(); }
+    } else {
+      run.status = 'error'; run.error = (e && e.message) || 'Something went wrong.';
+      if (last && last.kind === 'step') { if (e && e.partial) { last.text = e.partial; } last.status = 'failed'; last.failed = true; if (!last.text) run.log.pop(); }
+    }
+  } finally {
+    if (RUN.ctrl === ctrl) RUN.ctrl = null;
+    saveRunNow(run); runEmit();
+  }
+}
+
+// show the file name above each code block (the sanitizer drops code classes)
+function labelFences(md) { return md.replace(/^([ \t]*)(`{3,})([\w+#.-]*)[ \t]+(?:title=["']?)?([^\s`"']+\.[A-Za-z0-9]{1,8})["']?[^\n]*$/gm, (m, ind, f, lang, name) => `${ind}📄 **${name}**\n\n${ind}${f}${lang}`); }
+function runOutputs(run) { return run.log.filter(e => e.kind === 'step' && e.text).map(e => e.text); }
+function runFiles(run) { return collectFiles(runOutputs(run)); }
+function runMarkdown(run) {
+  const parts = [`# ${run.title || run.command}`, '', `Command: ${run.command}`, ''];
+  for (const e of run.log) {
+    if (e.kind === 'user' && e !== run.log[0]) parts.push(`\n---\n**You:** ${e.text}\n`);
+    if (e.kind === 'step' && e.text) parts.push(stripStatus(e.text), '');
+  }
+  return parts.join('\n');
+}
+
+// ---------- saving files (web download, or the phone's Documents folder in the app) ----------
+function toBase64(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); }
+const MIME = { html: 'text/html', css: 'text/css', js: 'text/javascript', json: 'application/json', md: 'text/markdown', svg: 'image/svg+xml', zip: 'application/zip', csv: 'text/csv', py: 'text/x-python' };
+async function saveFile(name, data) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+  const ext = name.split('.').pop().toLowerCase();
+  const C = window.Capacitor, FS = C && C.Plugins && C.Plugins.Filesystem;
+  if (C && C.isNativePlatform && C.isNativePlatform() && FS) {
+    const flat = name.replace(/\//g, '_');
+    try {
+      await FS.writeFile({ path: 'SkillChat/' + flat, data: toBase64(bytes), directory: 'DOCUMENTS', recursive: true });
+      toast('Saved to Documents/SkillChat/' + flat, 4000); return 'saved';
+    } catch (e) {
+      try {
+        const w = await FS.writeFile({ path: flat, data: toBase64(bytes), directory: 'CACHE' });
+        if (C.Plugins.Share) { await C.Plugins.Share.share({ title: flat, files: [w.uri] }); return 'shared'; }
+      } catch (e2) { toast('Could not save the file: ' + (e2.message || e2)); return 'failed'; }
+    }
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: MIME[ext] || 'text/plain' }));
+  const a = h('a', { href: url, download: name.split('/').pop() });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return 'downloaded';
+}
+function zipName(run) { return ((run.title || run.command).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'skill-chat') + '.zip'; }
+
+// ---------- preview (sandboxed iframe, opaque origin) ----------
+function openPreview(file, files) {
+  const html = previewDoc(file, files);
+  const frame = h('iframe', { class: 'preview-frame', title: 'Preview of ' + file.name, sandbox: 'allow-scripts allow-forms allow-modals', referrerpolicy: 'no-referrer', src: 'preview.html' });
+  let sent = false;
+  frame.addEventListener('load', () => { if (sent) return; sent = true; frame.contentWindow.postMessage({ type: 'skillchat-preview', html }, '*'); });
+  const body = h('div', { class: 'preview-wrap' },
+    h('p', { class: 'small muted', text: 'Live preview. It runs in a locked box: it cannot see your keys or chats.' }), frame);
+  const panel = openSheet('Preview: ' + file.name, body, { wide: true });
+  panel.classList.add('preview-sheet');
+  return frame;
+}
+function viewCode(file) {
+  const box = h('div', null, h('pre', null, h('code', { class: 'language-' + file.lang, text: file.content })));
+  addCopyButtons(box);
+  openSheet(file.name, h('div', { class: 'file-view' }, box, h('div', { class: 'row' }, h('button', { class: 'btn ghost', type: 'button', text: 'Download', onclick: () => saveFile(file.name, file.content) }))), { wide: true });
+}
+
+// ---------- skill picker (tap a chip to change) ----------
+function skillPicker(current, onApply) {
+  const all = libSkills();
+  const chosen = new Set(current.map(s => s.id));
+  const search = h('input', { type: 'search', class: 'search', placeholder: `Search ${all.length} skills`, 'aria-label': 'Search skills' });
+  const list = h('ul', { class: 'plain-list pick-list' });
+  const info = h('p', { class: 'small muted' });
+  const draw = () => {
+    const q = search.value.trim().toLowerCase();
+    list.textContent = '';
+    const vis = all.filter(s => !q || (s.name + ' ' + s.description).toLowerCase().includes(q)).slice(0, 80);
+    vis.forEach(s => {
+      const cb = h('input', { type: 'checkbox', checked: chosen.has(s.id), 'aria-label': s.name });
+      cb.addEventListener('change', () => {
+        if (cb.checked) { if (chosen.size >= MAX_PICK) { cb.checked = false; toast(`Up to ${MAX_PICK} skills`); return; } chosen.add(s.id); } else chosen.delete(s.id);
+        info.textContent = chosen.size ? `${chosen.size} selected` : 'None selected: general assistant';
+      });
+      list.append(h('li', null, h('label', { class: 'pick' }, cb, h('span', null, h('strong', { text: s.name }), h('span', { class: 'small muted block', text: s.description || '' })))));
+    });
+    if (!vis.length) list.append(h('li', { class: 'small muted', text: all.length ? 'No skill matches.' : 'Your skill library is empty. Add a repository in Settings.' }));
+  };
+  search.addEventListener('input', draw);
+  info.textContent = chosen.size ? `${chosen.size} selected` : 'None selected: general assistant';
+  draw();
+  openSheet('Choose skills', h('div', null,
+    h('p', { class: 'small', text: `Pick up to ${MAX_PICK} skills, or none for a general assistant. The task runs again with your choice.` }),
+    search, info, list,
+    h('div', { class: 'row sticky-actions' },
+      h('button', { class: 'btn primary', type: 'button', text: 'Run with these', onclick: () => { closeSheet(); onApply(all.filter(s => chosen.has(s.id))); } }),
+      h('button', { class: 'btn ghost', type: 'button', text: 'Cancel', onclick: closeSheet }))), { wide: true });
+}
+
+// ---------- screens ----------
+function renderDo() {
+  const v = view(); v.textContent = '';
+  const ta = h('textarea', { id: 'cmd', rows: '3', placeholder: 'For example: make a one-page website for my cafe', 'aria-label': 'What do you want done?', enterkeyhint: 'go' });
+  const go = () => {
+    const t = ta.value.trim();
+    if (!t) { ta.focus(); return; }
+    if (!hasAnyKey()) { openSheet('Add your AI key', keySetupForm(() => { closeSheet(); go(); })); return; }
+    const run = startRun(t);
+    location.hash = '#/run?id=' + run.id;
+  };
+  ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go(); } });
+  const libLine = h('div', { class: 'lib-line' });
+  const paintLib = () => {
+    if (!libLine.isConnected && libLine.dataset.drawn) { LIB.listeners.delete(paintLib); return; }
+    libLine.dataset.drawn = '1';
+    libLine.textContent = '';
+    const n = libSkills().length, repos = store.lib().repos.length;
+    libLine.append(h('span', { class: 'lib-count', text: LIB.busy ? `Loading skill library: ${LIB.done} of ${LIB.total || '…'}` : `${n} skill${n === 1 ? '' : 's'} ready from ${repos} repo${repos === 1 ? '' : 's'}` }),
+      h('button', { class: 'btn link', type: 'button', text: 'Manage', onclick: () => openSheet('Skill library', libraryManager()) }));
+  };
+  LIB.listeners.add(paintLib);
+  paintLib();
+  v.append(h('section', { class: 'do-hero' },
+    h('h1', { text: 'What do you want done?' }),
+    h('p', { class: 'lead', text: 'Type a job. Skill Chat picks the right skill from your library and works through it step by step.' }),
+    h('form', { class: 'cmdbox', onsubmit: e => { e.preventDefault(); go(); } }, ta, h('div', { class: 'cmd-actions' }, libLine, h('button', { class: 'btn primary big', type: 'submit', text: 'Do it' }))),
+    h('div', { class: 'examples', role: 'list', 'aria-label': 'Example jobs' },
+      AUTO_EXAMPLES.map(x => h('button', { class: 'chip', type: 'button', role: 'listitem', text: x, onclick: () => { ta.value = x; ta.focus(); } }))),
+    h('p', { class: 'honest small' }, 'Skill Chat writes text, code, websites and files you can preview, copy or download. It cannot open or control other apps on your phone.')));
+  const runs = store.runs();
+  if (runs.length) v.append(h('section', { class: 'block' }, h('h2', { text: 'Recent jobs' }),
+    h('ul', { class: 'plain-list' }, runs.slice(0, 12).map(r => h('li', { class: 'hist' },
+      h('a', { href: '#/run?id=' + encodeURIComponent(r.id) }, h('span', { class: 'rec-name', text: r.title || r.command }),
+        h('span', { class: 'rec-when', text: `${fmtWhen(r.updated)}, ${statusWord(r)}` })),
+      h('button', { class: 'btn link danger', type: 'button', text: 'Delete', 'aria-label': 'Delete job ' + (r.title || r.command), onclick: e => { if (isRunning(r.id)) stopRun(); store.deleteRun(r.id); e.currentTarget.closest('li').remove(); } }))))));
+  v.append(h('section', { class: 'block how' }, h('h2', { text: 'Prefer to pick a skill yourself?' }),
+    h('p', null, h('a', { href: '#/explore', text: 'Explore skills' }), ' from any GitHub link and chat with one skill.'),
+    window.Capacitor ? null : h('p', { class: 'small' }, h('a', { href: 'downloads/SkillChat-v1.1.apk', download: 'SkillChat-v1.1.apk', text: 'Download the Android app (APK, 3 MB)' }), ' or tap your browser menu and choose Install app.')));
+  indexLibrary();
+  if (window.matchMedia('(pointer:fine)').matches) ta.focus();
+}
+function statusWord(r) {
+  if ((r.status === 'routing' || r.status === 'running') && !isRunning(r.id)) return 'stopped';
+  return { routing: 'picking skill', running: 'working', done: 'done', max: 'step limit', stopped: 'stopped', error: 'failed', nokey: 'needs key' }[r.status] || r.status;
+}
+
+function renderRun(q) {
+  const id = q.get('id') || '';
+  const v = view(); v.textContent = '';
+  let run = (RUN.run && RUN.run.id === id) ? RUN.run : store.run(id);
+  if (!run) {
+    v.append(h('div', { class: 'errbox' }, h('h2', { text: 'Job not found' }), h('p', { text: 'This job is not saved on this device.' }), h('a', { class: 'btn ghost', href: '#/', text: 'New job' })));
+    return;
+  }
+  const wrap = h('div', { class: 'run' });
+  v.append(wrap);
+  let raf = 0, openSteps = new Set();
+  const mdCache = new WeakMap();
+  const paint = () => {
+    raf = 0;
+    if (!wrap.isConnected) { RUN.listeners.delete(onEmit); return; }
+    if (RUN.run && RUN.run.id === id) run = RUN.run;
+    const keepY = window.scrollY;
+    const focusFollow = document.activeElement && document.activeElement.id === 'followup';
+    const followVal = wrap.querySelector('#followup') ? wrap.querySelector('#followup').value : '';
+    wrap.textContent = '';
+    const running = isRunning(run.id);
+    wrap.append(h('div', { class: 'run-head' },
+      h('a', { class: 'icon-btn', href: '#/', 'aria-label': 'Back', text: '‹' }),
+      h('div', null, h('h1', { class: 'run-title', text: run.title || 'Your job' }), h('p', { class: 'run-cmd', text: run.command }))));
+    // skills
+    const chips = h('div', { class: 'skill-chips' });
+    if (run.status === 'routing') chips.append(h('span', { class: 'loading inline' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Choosing the best skill…'));
+    else {
+      const change = () => skillPicker(run.skills, picked => {
+        if (running) stopRun();
+        run.skills = picked.map(s => ({ id: s.id, owner: s.owner, repo: s.repo, ref: s.ref, path: s.path, dir: s.dir, name: s.name, description: s.description, files: s.files || [] }));
+        run.routedBy = 'user'; run.log = run.log.slice(0, 1); run.status = 'running';
+        saveRunNow(run); drive(run);
+      });
+      if (run.skills.length) {
+        chips.append(h('span', { class: 'chips-lbl', text: run.skills.length === 1 ? 'Using skill' : 'Using skills' }));
+        run.skills.forEach(s => chips.append(h('button', { class: 'skill-chip', type: 'button', title: (s.description || '') + ' (tap to change)', 'aria-label': 'Using skill ' + s.name + '. Tap to change', onclick: change },
+          h('span', { class: 'chip-v', text: s.name }))));
+      }
+      else chips.append(h('button', { class: 'skill-chip none', type: 'button', onclick: change }, h('span', { class: 'chip-k', text: 'No skill' }), h('span', { class: 'chip-v', text: 'General assistant' })));
+      chips.append(h('button', { class: 'btn link small', type: 'button', text: 'Change', onclick: change }));
+    }
+    wrap.append(chips);
+    if (run.routeNote) wrap.append(h('p', { class: 'small muted', text: run.routeNote }));
+    if (run.plan && run.plan.length) wrap.append(h('ol', { class: 'plan' }, run.plan.map(p => h('li', { text: p }))));
+    // steps
+    const steps = h('ol', { class: 'steps-list' });
+    const stepEntries = run.log.filter(e => e.kind === 'step' || (e.kind === 'user' && e !== run.log[0]));
+    const lastStep = [...run.log].reverse().find(e => e.kind === 'step');
+    stepEntries.forEach((e, idx) => {
+      if (e.kind === 'user') { steps.append(h('li', { class: 'followup-msg' }, h('span', { class: 'chip-k', text: 'You asked' }), h('p', { text: e.text }))); return; }
+      const key = idx;
+      const isLast = e === lastStep;
+      const det = h('details', { class: 'step s-' + e.status, open: isLast || openSteps.has(key) });
+      det.addEventListener('toggle', () => { if (det.open) openSteps.add(key); else openSteps.delete(key); });
+      const label = { working: 'Working…', done: 'Done', cut: 'Cut off, continuing', stopped: 'Stopped', failed: 'Failed' }[e.status] || e.status;
+      det.append(h('summary', null, h('span', { class: 'step-n', text: 'Step ' + e.n }), h('span', { class: 'step-st', text: label })));
+      if (e.note) det.append(h('p', { class: 'switch-note', text: e.note }));
+      const body = h('div', { class: 'step-body' });
+      if (e.text) {
+        let c = mdCache.get(e);
+        if (!c || c.len !== e.text.length) { c = { len: e.text.length, node: renderMarkdown(labelFences(stripStatus(e.text))) }; mdCache.set(e, c); }
+        body.append(c.node);
+      }
+      else body.append(h('span', { class: 'dots', 'aria-label': 'AI is working' }, h('i'), h('i'), h('i')));
+      det.append(body);
+      if (e.via) det.append(h('p', { class: 'via small muted', text: 'via ' + e.via }));
+      steps.append(det);
+    });
+    if (stepEntries.length) wrap.append(steps);
+    // status bar
+    const bar = h('div', { class: 'run-bar', role: 'status' });
+    const nSteps = run.log.filter(e => e.kind === 'step' && e.text).length;
+    if (running) bar.append(h('span', { class: 'loading inline' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), run.status === 'routing' ? 'Picking a skill' : `Working on step ${lastStep ? lastStep.n : 1} (max ${run.maxSteps})`),
+      h('button', { class: 'btn stop', type: 'button', text: 'Stop', onclick: stopRun }));
+    else if (run.status === 'done') bar.append(h('span', { class: 'ok-txt', text: `Done in ${nSteps} step${nSteps === 1 ? '' : 's'}` }));
+    else if (run.status === 'max') bar.append(h('span', { text: `Reached the step limit (${run.maxSteps}).` }), h('button', { class: 'btn ghost small', type: 'button', text: 'Continue', onclick: () => drive(run) }));
+    else if (run.status === 'stopped' || run.status === 'routing' || run.status === 'running') bar.append(h('span', { text: 'Stopped.' }), h('button', { class: 'btn ghost small', type: 'button', text: 'Continue', onclick: () => drive(run, { route: !run.routedBy }) }));
+    else if (run.status === 'error') bar.append(h('span', { class: 'err-txt', text: run.error }), h('button', { class: 'btn ghost small', type: 'button', text: 'Try again', onclick: () => drive(run, { route: !run.routedBy }) }), h('a', { class: 'btn ghost small', href: '#/settings', text: 'Settings' }));
+    else if (run.status === 'nokey') bar.append(h('span', { text: 'Add your AI key to run this job.' }), h('button', { class: 'btn primary small', type: 'button', text: 'Add key', onclick: () => openSheet('Add your AI key', keySetupForm(() => { closeSheet(); drive(run, { route: !run.routedBy }); })) }));
+    wrap.append(bar);
+    // files
+    const files = runFiles(run);
+    if (files.length) {
+      const fsec = h('section', { class: 'block files-out' }, h('div', { class: 'list-head' }, h('h2', { text: files.length === 1 ? '1 file' : `${files.length} files` }),
+        h('button', { class: 'btn primary small', type: 'button', text: 'Download all (.zip)', onclick: () => saveFile(zipName(run), makeZip(files.map(f => ({ name: f.name, content: f.content })))) })));
+      const ul = h('ul', { class: 'file-cards' });
+      files.forEach(f => {
+        const isHtml = /^html?$/.test(f.name.split('.').pop().toLowerCase());
+        ul.append(h('li', { class: 'file-card' },
+          h('span', { class: 'ext', text: f.name.split('.').pop().slice(0, 4) }),
+          h('span', { class: 'fc-txt' }, h('span', { class: 'fc-name', text: f.name }), h('span', { class: 'small muted', text: fmtSize(new TextEncoder().encode(f.content).length) + (f.complete ? '' : ', incomplete') })),
+          h('span', { class: 'fc-acts' },
+            isHtml ? h('button', { class: 'btn primary small', type: 'button', text: 'Preview', onclick: () => openPreview(f, files) }) : null,
+            h('button', { class: 'btn ghost small', type: 'button', text: 'Code', onclick: () => viewCode(f) }),
+            h('button', { class: 'btn ghost small', type: 'button', text: 'Download', 'aria-label': 'Download ' + f.name, onclick: () => saveFile(f.name, f.content) }))));
+      });
+      fsec.append(ul); wrap.append(fsec);
+    }
+    if (nSteps && !running) wrap.append(h('div', { class: 'row result-acts' },
+      h('button', { class: 'btn ghost small', type: 'button', text: 'Copy all text', onclick: e => copyText(runMarkdown(run), e.currentTarget) }),
+      h('button', { class: 'btn ghost small', type: 'button', text: 'Download as .md', onclick: () => saveFile(zipName(run).replace(/\.zip$/, '.md'), runMarkdown(run)) })));
+    // follow-up
+    if (!running && nSteps) {
+      const fu = h('textarea', { id: 'followup', rows: '1', placeholder: 'Ask for changes…', 'aria-label': 'Ask for changes' });
+      fu.value = followVal;
+      fu.addEventListener('input', () => { fu.style.height = 'auto'; fu.style.height = Math.min(fu.scrollHeight, 140) + 'px'; });
+      wrap.append(h('form', { class: 'composer run-composer', onsubmit: e => { e.preventDefault(); const t = fu.value.trim(); if (!t) return; run.log.push({ kind: 'user', text: t }); run.status = 'running'; saveRunNow(run); drive(run); } },
+        fu, h('button', { class: 'btn primary send', type: 'submit', text: 'Send' })));
+      if (focusFollow) fu.focus();
+    }
+    if (running) { const nearBottom = document.documentElement.scrollHeight - keepY - innerHeight < 260; window.scrollTo(0, nearBottom ? document.documentElement.scrollHeight : keepY); }
+    else window.scrollTo(0, keepY);
+  };
+  const onEmit = () => { if (!raf) raf = requestAnimationFrame(paint); };
+  RUN.listeners.add(onEmit);
+  paint();
 }
 
 // ---------- boot ----------
