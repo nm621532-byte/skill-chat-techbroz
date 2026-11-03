@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; worker-src 'self'; frame-src 'self'; child-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; worker-src 'self'; media-src 'self' blob:; frame-src 'self'; child-src 'self'">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Skill Chat: tell it a job, it picks the skill and does it</title>
 <meta name="description" content="Type a job. Skill Chat picks the right AI skill (SKILL.md) from GitHub and does it step by step: websites, code, scripts and files. Your own API key, stored only on your device.">
@@ -25,6 +25,7 @@
   </a>
   <nav class="nav" aria-label="Main">
     <a href="#/" data-nav="do">Do it</a>
+    <a href="#/post" data-nav="post">Post</a>
     <a href="#/explore" data-nav="explore">Explore</a>
     <a href="#/library" data-nav="library">Saved</a>
     <a href="#/settings" data-nav="settings">Settings</a>
@@ -36,6 +37,7 @@
 </footer>
 <nav class="tabbar" aria-label="Main">
   <a href="#/" data-nav="do"><span class="ti ti-do" aria-hidden="true"></span>Do it</a>
+  <a href="#/post" data-nav="post"><span class="ti ti-post" aria-hidden="true"></span>Post</a>
   <a href="#/explore" data-nav="explore"><span class="ti ti-explore" aria-hidden="true"></span>Explore</a>
   <a href="#/library" data-nav="library"><span class="ti ti-saved" aria-hidden="true"></span>Saved</a>
   <a href="#/settings" data-nav="settings"><span class="ti ti-settings" aria-hidden="true"></span>Settings</a>
