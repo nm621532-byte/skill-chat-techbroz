@@ -1,0 +1,7 @@
+{
+  "appId": "com.techbroz.skillchat",
+  "appName": "Skill Chat",
+  "webDir": "www",
+  "android": { "path": "native", "allowMixedContent": false },
+  "server": { "androidScheme": "https", "cleartext": false }
+}

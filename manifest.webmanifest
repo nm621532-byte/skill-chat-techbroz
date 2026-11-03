@@ -1,0 +1,29 @@
+{
+ "name": "Skill Chat",
+ "short_name": "Skill Chat",
+ "description": "Use any AI skill from GitHub: paste a link, pick a skill, chat with your own AI key.",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "orientation": "portrait",
+ "background_color": "#F1F2F8",
+ "theme_color": "#1F2557",
+ "icons": [
+  {
+   "src": "icons/icon-192.png",
+   "sizes": "192x192",
+   "type": "image/png"
+  },
+  {
+   "src": "icons/icon-512.png",
+   "sizes": "512x512",
+   "type": "image/png"
+  },
+  {
+   "src": "icons/maskable-512.png",
+   "sizes": "512x512",
+   "type": "image/png",
+   "purpose": "maskable"
+  }
+ ]
+}

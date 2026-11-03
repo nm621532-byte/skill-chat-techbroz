@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https: data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'; worker-src 'self'; frame-src 'none'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Skill Chat: use any AI skill from GitHub</title>
+<meta name="description" content="Paste a GitHub link, pick an AI skill (SKILL.md), and chat with an AI that follows it. Your own API key, stored only on your device.">
+<meta name="theme-color" content="#1F2557">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="app.css">
+<script src="vendor/marked.umd.js" defer></script>
+<script src="vendor/purify.min.js" defer></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<a class="skip" href="#view">Skip to content</a>
+<header class="top">
+  <a class="brand" href="#/" aria-label="Skill Chat home">
+    <span class="mark" aria-hidden="true"><span></span></span>
+    <span class="brand-name">Skill Chat</span>
+  </a>
+  <nav class="nav" aria-label="Main">
+    <a href="#/" data-nav="explore">Explore</a>
+    <a href="#/library" data-nav="library">Saved</a>
+    <a href="#/settings" data-nav="settings">Settings</a>
+  </nav>
+</header>
+<main id="view" tabindex="-1"><p class="boot">Loading Skill Chat…</p></main>
+<footer class="foot">
+  <p>Made by Tech Bro Z. YouTube <a href="https://www.youtube.com/@techbrozdeveloper" target="_blank" rel="noopener noreferrer">@techbrozdeveloper</a></p>
+</footer>
+<nav class="tabbar" aria-label="Main">
+  <a href="#/" data-nav="explore"><span class="ti ti-explore" aria-hidden="true"></span>Explore</a>
+  <a href="#/library" data-nav="library"><span class="ti ti-saved" aria-hidden="true"></span>Saved</a>
+  <a href="#/settings" data-nav="settings"><span class="ti ti-settings" aria-hidden="true"></span>Settings</a>
+</nav>
+<div id="sheet-root"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<noscript><p class="boot">Skill Chat needs JavaScript turned on.</p></noscript>
+</body>
+</html>

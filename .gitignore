@@ -1,0 +1,5 @@
+node_modules/
+qa/
+*.jks
+keystore.properties
+.DS_Store
